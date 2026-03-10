@@ -482,31 +482,61 @@ class MainWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(self.tab_eye)
 
         controls = QtWidgets.QHBoxLayout()
+        controls.setSpacing(2)  # Уменьшаем расстояние между элементами
         layout.addLayout(controls)
 
-        # Управление фазами и шумом
-        controls.addWidget(QtWidgets.QLabel('Фаза сигнала:'))
+        # Фаза сигнала
+        phase_label = QtWidgets.QLabel('Фаза сигнала:')
+        controls.addWidget(phase_label)
         self.eye_phase = QtWidgets.QDoubleSpinBox()
         self.eye_phase.setRange(0, 360)
         self.eye_phase.setValue(0)
+        self.eye_phase.setMaximumWidth(80)  # Ограничиваем ширину
         controls.addWidget(self.eye_phase)
 
-        controls.addWidget(QtWidgets.QLabel('Фаза опорного:'))
+        controls.addSpacing(90)  # Небольшой отступ между группами
+
+        # Фаза опорного
+        phase_op_label = QtWidgets.QLabel('Фаза опорного:')
+        controls.addWidget(phase_op_label)
         self.eye_phase_op = QtWidgets.QDoubleSpinBox()
         self.eye_phase_op.setRange(0, 360)
         self.eye_phase_op.setValue(0)
+        self.eye_phase_op.setMaximumWidth(80)
         controls.addWidget(self.eye_phase_op)
 
-        controls.addWidget(QtWidgets.QLabel('СКО шума:'))
+        controls.addSpacing(90)
+
+        # СКО шума
+        noise_label = QtWidgets.QLabel('СКО шума:')
+        controls.addWidget(noise_label)
         self.eye_noise = QtWidgets.QDoubleSpinBox()
-        self.eye_noise.setRange(0.0, 5.0)  # Ограничение как в исходном коде (0-5)
+        self.eye_noise.setRange(0.0, 5.0)
         self.eye_noise.setDecimals(3)
-        self.eye_noise.setValue(0)  # Начальное значение 0
+        self.eye_noise.setValue(0)
+        self.eye_noise.setMaximumWidth(80)
         controls.addWidget(self.eye_noise)
 
-        btn_replot = QtWidgets.QPushButton('Пересчитать глаз-диаграмму')
+        controls.addSpacing(90)
+
+        # Длина реализации
+        realizations_label = QtWidgets.QLabel('Длина реализации:')
+        controls.addWidget(realizations_label)
+        self.eye_realizations = QtWidgets.QSpinBox()
+        self.eye_realizations.setRange(1, 100)
+        self.eye_realizations.setValue(10)
+        self.eye_realizations.setSuffix(' символов')
+        self.eye_realizations.setMaximumWidth(120)
+        controls.addWidget(self.eye_realizations)
+
+        controls.addSpacing(100)
+
+        # Кнопка
+        btn_replot = QtWidgets.QPushButton('Пересчитать')
         btn_replot.clicked.connect(self._update_eye_diagram)
         controls.addWidget(btn_replot)
+
+        controls.addStretch()  # Растяжка справа
 
         # Полотно для глаз-диаграммы
         self.eye_canvas = MplCanvas(self, width=10, height=6)
@@ -927,7 +957,7 @@ class MainWindow(QtWidgets.QMainWindow):
         noise_std = float(self.eye_noise.value())
 
         # Основные параметры (как в исходном коде)
-        num_realizations = 10
+        num_realizations = int(self.eye_realizations.value())
         fs = self.fs
         pn_rate = self.пс_частота
         N = self.N
