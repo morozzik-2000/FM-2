@@ -473,9 +473,72 @@ class MainWindow(QtWidgets.QMainWindow):
         self.compare_toolbar_rec = NavigationToolbar(self.compare_canvas_rec, self)
         layout.addWidget(self.compare_toolbar_rec)
 
-        # Поле BER
-        # self.ber_label = QtWidgets.QLabel('BER: -')
-        # layout.addWidget(self.ber_label)
+        # Группа для отображения статистики ошибок
+        stats_group = QtWidgets.QGroupBox("Статистика ошибок")
+        stats_layout = QtWidgets.QFormLayout()
+        stats_group.setLayout(stats_layout)
+
+        # Стилизация группы
+        stats_group.setStyleSheet("""
+            QGroupBox {
+                border: 2px solid gray;
+                border-radius: 10px;
+                margin-top: 10px;
+                font-weight: bold;
+            }
+            QGroupBox:title {
+                subcontrol-origin: margin;
+                subcontrol-position: top center;
+                padding: 5px;
+            }
+        """)
+
+        # Поля для отображения статистики
+        self.errors_label = QtWidgets.QLabel('0')
+        self.errors_label.setStyleSheet("color: red; font-weight: bold; font-size: 14px;")
+        stats_layout.addRow('Количество ошибок:', self.errors_label)
+
+        self.ber_label = QtWidgets.QLabel('0.000000')
+        self.ber_label.setStyleSheet("color: blue; font-weight: bold; font-size: 14px;")
+        stats_layout.addRow('BER (Bit Error Rate):', self.ber_label)
+
+        self.total_bits_label = QtWidgets.QLabel('0')
+        self.total_bits_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        stats_layout.addRow('Всего бит:', self.total_bits_label)
+
+        self.accuracy_label = QtWidgets.QLabel('100.00%')
+        self.accuracy_label.setStyleSheet("color: green; font-weight: bold; font-size: 14px;")
+        stats_layout.addRow('Точность:', self.accuracy_label)
+
+        layout.addWidget(stats_group)
+
+        layout.addStretch()
+
+    def _update_error_stats(self):
+        """Обновляет отображение статистики ошибок"""
+        # Получаем исходную и восстановленную ПСП
+        orig = self.pn_sequence[::self.дек_фактор][:len(self.limited)]
+        orig_bits = np.where(orig >= 0, 1, -1)
+
+        # Считаем ошибки
+        errors = np.sum(orig_bits != self.limited)
+        total = len(self.limited)
+        ber = errors / total if total > 0 else 0
+        accuracy = (1 - ber) * 100
+
+        # Обновляем метки
+        self.errors_label.setText(str(errors))
+        self.ber_label.setText(f'{ber:.8f}')
+        self.total_bits_label.setText(str(total))
+        self.accuracy_label.setText(f'{accuracy:.2f}%')
+
+        # Меняем цвет в зависимости от количества ошибок
+        if errors == 0:
+            self.errors_label.setStyleSheet("color: green; font-weight: bold; font-size: 14px;")
+            self.ber_label.setStyleSheet("color: green; font-weight: bold; font-size: 14px;")
+        else:
+            self.errors_label.setStyleSheet("color: red; font-weight: bold; font-size: 14px;")
+            self.ber_label.setStyleSheet("color: red; font-weight: bold; font-size: 14px;")
 
     # ---------- Глаз-диаграмма
     def _build_eye_tab(self):
@@ -685,6 +748,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._generate_all_signals()
         self._update_all_plots()
+        self._update_error_stats()
 
     # ---------- Генерация сигналов
     def _generate_all_signals(self):
@@ -715,8 +779,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.filtered = butter_lowpass_filter(self.mixed, self.фильтр_срез, self.fs, order=5)
 
         # Децимация
-        self.decimated = decimate(self.filtered, self.дек_фактор)
-        self.decimated_t = self.t[::self.дек_фактор]
+        # self.decimated = decimate(self.filtered, self.дек_фактор)
+        # self.decimated_t = self.t[::self.дек_фактор]
+        samples_per_symbol = int(self.fs / self.пс_частота)
+        offset = samples_per_symbol // 2
+
+        self.decimated = self.filtered[offset::samples_per_symbol]
+        self.decimated_t = self.t[offset::samples_per_symbol]
 
         # Решающее устройство
         self.limited = limiter(self.decimated)
@@ -946,8 +1015,8 @@ class MainWindow(QtWidgets.QMainWindow):
         ax2.grid(True)
         self.compare_canvas_rec.draw()
 
-        # Обновляем BER
-        # self.ber_label.setText(f'BER: {self.ber:.6e}   E_b/N_0: {self.eb_no:.2f} dB')
+        # Обновляем статистику ошибок
+        self._update_error_stats()
 
     # ---------- Глаз-диаграмма (с использованием SpinBox вместо слайдеров)
     def _update_eye_diagram(self):
