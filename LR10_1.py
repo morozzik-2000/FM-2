@@ -2,10 +2,11 @@
 import sys
 from PyQt6 import QtCore, QtGui, QtWidgets
 import numpy as np
-from scipy.signal import butter, lfilter, welch
+from scipy.signal import butter, filtfilt, welch
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 import matplotlib.pyplot as plt
+plt.rcParams['figure.max_open_warning'] = 50  # Увеличить лимит
 
 # ---------- Математические функции моделирования (внутри кода сохраняем латинские имена переменных)
 
@@ -38,7 +39,7 @@ def butter_lowpass_filter(data, cutoff, fs, order=3):
     nyq = 0.5 * fs
     normal_cutoff = cutoff / nyq
     b, a = butter(order, normal_cutoff, btype='low', analog=False)
-    y = lfilter(b, a, data)
+    y = filtfilt(b, a, data)
     return y
 
 
@@ -79,6 +80,147 @@ class MplCanvas(FigureCanvas):
         self.fig, self.ax = plt.subplots(figsize=(width, height), dpi=dpi)
         super().__init__(self.fig)
         plt.tight_layout()
+
+
+class TableInputDialog(QtWidgets.QDialog):
+    def __init__(self, x_name, y_name, parent=None, saved_data=None):
+        super().__init__(parent)
+
+        self.setWindowTitle("Ввод точек")
+        self.resize(500, 550)
+
+        layout = QtWidgets.QVBoxLayout(self)
+
+        # Создаем таблицу
+        self.table = QtWidgets.QTableWidget()
+        self.table.setColumnCount(2)
+        self.table.setRowCount(10)  # Начальное количество строк
+        self.table.setHorizontalHeaderLabels([x_name, y_name])
+
+        # Устанавливаем режим редактирования
+        self.table.setEditTriggers(QtWidgets.QTableWidget.EditTrigger.DoubleClicked |
+                                   QtWidgets.QTableWidget.EditTrigger.EditKeyPressed)
+
+        # Загружаем сохраненные данные, если они есть
+        if saved_data is not None and len(saved_data[0]) > 0:
+            x_data, y_data = saved_data
+            self.table.setRowCount(len(x_data))
+            for i, (x_val, y_val) in enumerate(zip(x_data, y_data)):
+                self._set_table_item(i, 0, x_val)
+                self._set_table_item(i, 1, y_val)
+
+        layout.addWidget(self.table)
+
+        # Кнопки управления таблицей (первый ряд)
+        btn_control_layout1 = QtWidgets.QHBoxLayout()
+
+        btn_add_row = QtWidgets.QPushButton("➕ Добавить строку")
+        btn_add_row.clicked.connect(self._add_row)
+        btn_control_layout1.addWidget(btn_add_row)
+
+        btn_remove_row = QtWidgets.QPushButton("➖ Удалить последнюю строку")
+        btn_remove_row.clicked.connect(self._remove_last_row)
+        btn_control_layout1.addWidget(btn_remove_row)
+
+        btn_clear_all = QtWidgets.QPushButton("🗑️ Очистить все")
+        btn_clear_all.clicked.connect(self._clear_all)
+        btn_control_layout1.addWidget(btn_clear_all)
+
+        layout.addLayout(btn_control_layout1)
+
+        # Кнопки сохранения и загрузки (второй ряд)
+        btn_control_layout2 = QtWidgets.QHBoxLayout()
+
+        btn_save = QtWidgets.QPushButton("💾 Сохранить точки в CSV")
+        btn_save.clicked.connect(self._save_points)
+        btn_control_layout2.addWidget(btn_save)
+
+
+        layout.addLayout(btn_control_layout2)
+
+        # Стандартные кнопки OK/Cancel
+        btn_box = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Ok |
+            QtWidgets.QDialogButtonBox.StandardButton.Cancel
+        )
+        btn_box.accepted.connect(self.accept)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
+
+    def _set_table_item(self, row, col, value):
+        """Устанавливает значение ячейки с форматированием до 3 знаков"""
+        item = QtWidgets.QTableWidgetItem(f"{value:.3f}")
+        self.table.setItem(row, col, item)
+
+    def _add_row(self):
+        """Добавляет новую строку в таблицу"""
+        current_row = self.table.rowCount()
+        self.table.setRowCount(current_row + 1)
+
+    def _remove_last_row(self):
+        """Удаляет последнюю строку, если строк больше 1"""
+        current_row = self.table.rowCount()
+        if current_row > 1:
+            self.table.setRowCount(current_row - 1)
+
+    def _clear_all(self):
+        """Очищает все строки, оставляя только одну пустую"""
+        self.table.setRowCount(1)
+        # Очищаем содержимое первой строки
+        self.table.setItem(0, 0, None)
+        self.table.setItem(0, 1, None)
+
+    def _save_points(self):
+        """Сохраняет точки из таблицы в CSV файл"""
+        x, y = self.get_data()
+
+        if len(x) == 0:
+            QtWidgets.QMessageBox.warning(self, "Предупреждение",
+                                          "Нет данных для сохранения. Заполните таблицу.")
+            return
+
+        # Получаем названия столбцов
+        x_name = self.table.horizontalHeaderItem(0).text()
+        y_name = self.table.horizontalHeaderItem(1).text()
+
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Сохранить точки", "", "CSV файлы (*.csv);;Все файлы (*.*)"
+        )
+
+        if path:
+            if not path.endswith('.csv'):
+                path += '.csv'
+
+            # Сохраняем точки в CSV с округлением до 3 знаков
+            data = np.column_stack((np.round(x, 3), np.round(y, 3)))
+            np.savetxt(path, data, delimiter=";", fmt='%.3f',
+                       header=f"{x_name};{y_name}", comments='')
+
+            QtWidgets.QMessageBox.information(self, "Успех",
+                                              f"Точки сохранены в файл:\n{path}")
+
+
+    def get_data(self):
+        """Возвращает данные из таблицы с округлением до 3 знаков"""
+        x = []
+        y = []
+        rows = self.table.rowCount()
+
+        for r in range(rows):
+            item_x = self.table.item(r, 0)
+            item_y = self.table.item(r, 1)
+
+            if item_x and item_y and item_x.text() and item_y.text():
+                try:
+                    # Округляем до 3 знаков при считывании
+                    xv = round(float(item_x.text()), 3)
+                    yv = round(float(item_y.text()), 3)
+                    x.append(xv)
+                    y.append(yv)
+                except ValueError:
+                    pass
+
+        return np.array(x), np.array(y)
 
 # ---------- Главное окно
 class MainWindow(QtWidgets.QMainWindow):
@@ -121,18 +263,36 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tab_decider = QtWidgets.QWidget()
         self.tab_compare = QtWidgets.QWidget()
         self.tab_eye = QtWidgets.QWidget()
+        self.tab_tradeoff = QtWidgets.QWidget()
 
-        tabs.addTab(self.tab_params, '1. Параметры')
-        tabs.addTab(self.tab_psp, '2. ПСП')
-        tabs.addTab(self.tab_oporny, '3. Опорный сигнал')
-        tabs.addTab(self.tab_modulator, '4. Модулятор')
-        tabs.addTab(self.tab_channel, '5. Канал')
-        tabs.addTab(self.tab_demod, '6. Выход перемножителя')
-        tabs.addTab(self.tab_lpf, '7. ФНЧ')
-        tabs.addTab(self.tab_decim, '8. Децимация')
-        tabs.addTab(self.tab_decider, '9. Решающее устройство')
-        tabs.addTab(self.tab_compare, '10. Сравнение')
-        tabs.addTab(self.tab_eye, '11. Глаз-диаграмма')
+        tabs.addTab(self.tab_params, 'Параметры')
+        self.tab_part1 = QtWidgets.QWidget()
+        tabs.addTab(self.tab_part1, 'Часть 1 (Моделирование)')
+        # tabs.addTab(self.tab_psp, '2. ПСП')
+        # tabs.addTab(self.tab_oporny, '3. Опорный сигнал')
+        # tabs.addTab(self.tab_modulator, '4. Модулятор')
+        # tabs.addTab(self.tab_channel, '5. Канал')
+        # tabs.addTab(self.tab_demod, '6. Выход перемножителя')
+        # tabs.addTab(self.tab_lpf, '7. ФНЧ')
+        # tabs.addTab(self.tab_decim, '8. Децимация')
+        # tabs.addTab(self.tab_decider, '9. Решающее устройство')
+        # tabs.addTab(self.tab_compare, '10. Сравнение')
+        tabs.addTab(self.tab_eye, 'Часть 2 (Глаз-диаграмма)')
+        tabs.addTab(self.tab_tradeoff, 'Часть 3 (Диаграмма обмена)')
+
+        part1_layout = QtWidgets.QVBoxLayout(self.tab_part1)
+        self.part1_tabs = QtWidgets.QTabWidget()
+        part1_layout.addWidget(self.part1_tabs)
+
+        self.part1_tabs.addTab(self.tab_psp, 'ПСП')
+        self.part1_tabs.addTab(self.tab_oporny, 'Опорный сигнал')
+        self.part1_tabs.addTab(self.tab_modulator, 'Модулятор')
+        self.part1_tabs.addTab(self.tab_channel, 'Канал')
+        self.part1_tabs.addTab(self.tab_demod, 'Выход перемножителя')
+        self.part1_tabs.addTab(self.tab_lpf, 'ФНЧ')
+        self.part1_tabs.addTab(self.tab_decim, 'Децимация')
+        self.part1_tabs.addTab(self.tab_decider, 'Решающее устройство')
+        self.part1_tabs.addTab(self.tab_compare, 'Сравнение')
 
         # ---------- Наполняем вкладки
         self._build_params_tab()
@@ -146,6 +306,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._build_decider_tab()
         self._build_compare_tab()
         self._build_eye_tab()
+        self._build_tradeoff_tab()
 
         # Сцена схемы блоков (будет размещена в параметрах)
         self._draw_block_diagram()
@@ -633,7 +794,7 @@ class MainWindow(QtWidgets.QMainWindow):
             '1-ПСП': (80, 30, 180, 70),
             '2-МОДУЛЯТОР': (330, 30, 180, 70),
             '3-КАНАЛ': (580, 30, 180, 70),
-            '4-ДЕМОДУЛЯТОР': (80, 150, 180, 70),  # Поднял еще выше
+            '4-ПЕРЕМНОЖИТЕЛЬ': (80, 150, 180, 70),  # Поднял еще выше
             '5-ФНЧ': (330, 150, 180, 70),  # Поднял еще выше
             '6-ДЕЦИМАТОР': (580, 150, 180, 70),  # Поднял еще выше
             '7-РЕШАЮЩЕЕ\nУСТРОЙСТВО': (830, 150, 180, 70)  # Поднял еще выше
@@ -695,7 +856,7 @@ class MainWindow(QtWidgets.QMainWindow):
                   channel_y + channel_h / 2, "y(t)", 0, -20)
 
         # Вход в ДЕМОДУЛЯТОР слева с подписью y(t)
-        demodulator_x, demodulator_y, demodulator_w, demodulator_h = self.block_items['4-ДЕМОДУЛЯТОР'][1]
+        demodulator_x, demodulator_y, demodulator_w, demodulator_h = self.block_items['4-ПЕРЕМНОЖИТЕЛЬ'][1]
         add_arrow(demodulator_x - 60, demodulator_y + demodulator_h / 2, demodulator_x,
                   demodulator_y + demodulator_h / 2, "y(t)", -40, -20)
 
@@ -777,11 +938,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Фильтрация
         self.filtered = butter_lowpass_filter(self.mixed, self.фильтр_срез, self.fs, order=5)
+        # self.filtered = self.filtered - np.mean(self.filtered)
 
         # Децимация
         # self.decimated = decimate(self.filtered, self.дек_фактор)
         # self.decimated_t = self.t[::self.дек_фактор]
-        samples_per_symbol = int(self.fs / self.пс_частота)
+        samples_per_symbol = int(round(self.fs / self.пс_частота))
         offset = samples_per_symbol // 2
 
         self.decimated = self.filtered[offset::samples_per_symbol]
@@ -805,7 +967,10 @@ class MainWindow(QtWidgets.QMainWindow):
         noise_power = calculate_power(self.noisy - self.multiplied)
         bandwidth = self.fs / 2
         noise_density = noise_power / bandwidth if bandwidth > 0 else 1e-12
-        eb_no = 10 * np.log10(bit_energy / noise_density + 1e-30)
+        if noise_density > 0:
+            eb_no = 10 * np.log10(bit_energy / noise_density + 1e-30)
+        else:
+            eb_no = 0  # или другое значение по умолчанию
         self.eb_no = eb_no
 
     # ---------- Обновление всех графиков
@@ -1033,13 +1198,13 @@ class MainWindow(QtWidgets.QMainWindow):
         t = self.t
 
         # Временные параметры для сегмента (как в исходном коде)
-        start_time = 0.035  # Начало интервала в секундах
+        start_time = 0  # Начало интервала в секундах
         end_time = 2.2  # Конец интервала в секундах
 
-        start_idx = int(start_time * fs)
+        start_idx = 0
         end_idx = int(end_time * fs)
 
-        samples_per_symbol = int(fs / pn_rate)
+        samples_per_symbol = int(round(fs / pn_rate))
         t_symbol = np.linspace(0, 1 / pn_rate, samples_per_symbol, endpoint=False)
 
         ax = self.eye_canvas.ax
@@ -1055,7 +1220,8 @@ class MainWindow(QtWidgets.QMainWindow):
             sinusoid_1 = generate_sinusoid(self.частота_опорного, phase, fs, N)
 
             # 2. Модуляция (умножение ПСП на несущую)
-            multiplied_signal = self.pn_sequence * sinusoid_1
+            pn_seq = generate_pn_sequence(N, pn_rate, [-1, 1], fs)
+            multiplied_signal = pn_seq * sinusoid_1
 
             # 3. Добавление шума
             noisy_signal = add_gaussian_noise(multiplied_signal, noise_std, 0)
@@ -1073,9 +1239,18 @@ class MainWindow(QtWidgets.QMainWindow):
             filtered_signal_segment = filtered_signal[start_idx:end_idx]
 
             # 8. Построение глаз-диаграммы (ОСНОВНАЯ ЧАСТЬ)
-            for i in range(0, len(filtered_signal_segment) - samples_per_symbol, samples_per_symbol):
-                ax.plot(t_symbol, filtered_signal_segment[i:i + samples_per_symbol],
-                        color=colors[realization_idx], linewidth=0.5)
+            num_segments = (len(filtered_signal_segment) - samples_per_symbol) // samples_per_symbol
+
+            for idx, i in enumerate(range(0, len(filtered_signal_segment) - samples_per_symbol, samples_per_symbol)):
+                color = plt.cm.viridis(idx / num_segments)
+
+                ax.plot(
+                    t_symbol,
+                    filtered_signal_segment[i:i + samples_per_symbol],
+                    color=color,
+                    linewidth=0.5
+                )
+
 
         # Настройка графика (как в исходном коде)
         ax.set_title('Глаз-диаграмма')
@@ -1088,6 +1263,318 @@ class MainWindow(QtWidgets.QMainWindow):
         ax.grid(True)
 
         self.eye_canvas.draw()
+
+    def _build_tradeoff_tab(self):
+        # Создаём вложенный QTabWidget
+        self.tradeoff_tabs = QtWidgets.QTabWidget()
+
+        # Создаём три подвкладки
+        self.tradeoff_tab1 = QtWidgets.QWidget()
+        self.tradeoff_tab2 = QtWidgets.QWidget()
+        self.tradeoff_tab3 = QtWidgets.QWidget()
+
+        # Добавляем подвкладки в основной виджет вкладки
+        self.tradeoff_tabs.addTab(self.tradeoff_tab1, 'График 1: СКО шума → h')
+        self.tradeoff_tabs.addTab(self.tradeoff_tab2, 'График 2: Δφ → h')
+        self.tradeoff_tabs.addTab(self.tradeoff_tab3, 'График 3: Δφ → СКО шума')
+
+        # Создаём макет для основной вкладки и добавляем в него вложенные вкладки
+        main_layout = QtWidgets.QVBoxLayout(self.tab_tradeoff)
+        main_layout.addWidget(self.tradeoff_tabs)
+
+        # --- Заполняем первую подвкладку ---
+        layout1 = QtWidgets.QVBoxLayout(self.tradeoff_tab1)
+
+        self.trade_data1 = None
+
+        # График 1
+        self.canvas1 = MplCanvas(self, width=8, height=5)
+        layout1.addWidget(self.canvas1)
+
+        # Панель инструментов для графика 1
+        self.trade_toolbar1 = NavigationToolbar(self.canvas1, self)
+        layout1.addWidget(self.trade_toolbar1)
+
+        # Кнопки для графика 1 (только задать таблицу и построить)
+        btn_layout1 = QtWidgets.QHBoxLayout()
+
+        btn_table1 = QtWidgets.QPushButton("Задать таблицу")
+        btn_plot1 = QtWidgets.QPushButton("Построить график")
+
+        btn_table1.clicked.connect(self._table_graph1)
+        btn_plot1.clicked.connect(self._plot_graph1)
+
+        btn_layout1.addWidget(btn_table1)
+        btn_layout1.addWidget(btn_plot1)
+        btn_layout1.addStretch()
+
+        layout1.addLayout(btn_layout1)
+        layout1.addStretch()
+
+        # --- Заполняем вторую подвкладку ---
+        layout2 = QtWidgets.QVBoxLayout(self.tradeoff_tab2)
+
+        self.trade_data2 = None
+
+        # График 2
+        self.canvas2 = MplCanvas(self, width=8, height=5)
+        layout2.addWidget(self.canvas2)
+
+        # Панель инструментов для графика 2
+        self.trade_toolbar2 = NavigationToolbar(self.canvas2, self)
+        layout2.addWidget(self.trade_toolbar2)
+
+        # Кнопки для графика 2
+        btn_layout2 = QtWidgets.QHBoxLayout()
+
+        btn_table2 = QtWidgets.QPushButton("Задать таблицу")
+        btn_plot2 = QtWidgets.QPushButton("Построить график")
+
+        btn_table2.clicked.connect(self._table_graph2)
+        btn_plot2.clicked.connect(self._plot_graph2)
+
+        btn_layout2.addWidget(btn_table2)
+        btn_layout2.addWidget(btn_plot2)
+        btn_layout2.addStretch()
+
+        layout2.addLayout(btn_layout2)
+        layout2.addStretch()
+
+        # --- Заполняем третью подвкладку ---
+        layout3 = QtWidgets.QVBoxLayout(self.tradeoff_tab3)
+
+        self.trade_data3 = None
+
+        # График 3
+        self.canvas3 = MplCanvas(self, width=8, height=5)
+        layout3.addWidget(self.canvas3)
+
+        # Панель инструментов для графика 3
+        self.trade_toolbar3 = NavigationToolbar(self.canvas3, self)
+        layout3.addWidget(self.trade_toolbar3)
+
+        # Кнопки для графика 3
+        btn_layout3 = QtWidgets.QHBoxLayout()
+
+        btn_table3 = QtWidgets.QPushButton("Задать таблицу")
+        btn_plot3 = QtWidgets.QPushButton("Построить график")
+
+        btn_table3.clicked.connect(self._table_graph3)
+        btn_plot3.clicked.connect(self._plot_graph3)
+
+        btn_layout3.addWidget(btn_table3)
+        btn_layout3.addWidget(btn_plot3)
+        btn_layout3.addStretch()
+
+        layout3.addLayout(btn_layout3)
+        layout3.addStretch()
+
+    def _table_graph1(self):
+        """Открывает диалог для графика 1 с сохранением предыдущих данных"""
+        dlg = TableInputDialog("СКО шума", "h", self, self.trade_data1)
+        if dlg.exec():
+            self.trade_data1 = dlg.get_data()
+
+    def _table_graph2(self):
+        """Открывает диалог для графика 2 с сохранением предыдущих данных"""
+        dlg = TableInputDialog("Δφ", "h", self, self.trade_data2)
+        if dlg.exec():
+            self.trade_data2 = dlg.get_data()
+
+    def _table_graph3(self):
+        """Открывает диалог для графика 3 с сохранением предыдущих данных"""
+        dlg = TableInputDialog("Δφ", "СКО шума", self, self.trade_data3)
+        if dlg.exec():
+            self.trade_data3 = dlg.get_data()
+
+    def _plot_graph1(self):
+        if self.trade_data1 is None or len(self.trade_data1[0]) == 0:
+            QtWidgets.QMessageBox.warning(self, "Предупреждение",
+                                          "Нет данных для построения графика. Сначала задайте таблицу.")
+            return
+
+        x, y = self.trade_data1
+
+        ax = self.canvas1.ax
+        ax.clear()
+
+        # Строим график с лейблами
+        line, = ax.plot(x, y, 'o-', linewidth=2, markersize=8,
+                        label='Экспериментальные точки', color='blue')
+
+        # Добавляем подписи к точкам (значения)
+        for i, (xi, yi) in enumerate(zip(x, y)):
+            ax.annotate(f'({xi:.3f}, {yi:.3f})',
+                        (xi, yi),
+                        textcoords="offset points",
+                        xytext=(0, 10),
+                        ha='center',
+                        fontsize=8,
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.7))
+
+        # Настройка осей
+        ax.set_xlabel("СКО шума", fontsize=12, fontweight='bold')
+        ax.set_ylabel("h", fontsize=12, fontweight='bold')
+
+        # Добавляем заголовок
+        ax.set_title('Зависимость h от СКО шума', fontsize=14, fontweight='bold')
+
+        # Добавляем легенду
+        ax.legend(loc='best', fontsize=10)
+
+        # Добавляем сетку
+        ax.grid(True, alpha=0.3)
+
+        # Добавляем подписи минимальных и максимальных значений
+        if len(x) > 0:
+            max_idx = np.argmax(y)
+            min_idx = np.argmin(y)
+
+            ax.annotate(f'Max: ({x[max_idx]:.3f}, {y[max_idx]:.3f})',
+                        (x[max_idx], y[max_idx]),
+                        textcoords="offset points",
+                        xytext=(0, -20),
+                        ha='center',
+                        fontsize=9,
+                        color='green',
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='lightgreen', alpha=0.7))
+
+            ax.annotate(f'Min: ({x[min_idx]:.3f}, {y[min_idx]:.3f})',
+                        (x[min_idx], y[min_idx]),
+                        textcoords="offset points",
+                        xytext=(0, 20),
+                        ha='center',
+                        fontsize=9,
+                        color='red',
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='lightcoral', alpha=0.7))
+
+        self.canvas1.draw()
+
+    def _plot_graph2(self):
+        if self.trade_data2 is None or len(self.trade_data2[0]) == 0:
+            QtWidgets.QMessageBox.warning(self, "Предупреждение",
+                                          "Нет данных для построения графика. Сначала задайте таблицу.")
+            return
+
+        x, y = self.trade_data2
+
+        ax = self.canvas2.ax
+        ax.clear()
+
+        # Строим график с лейблами
+        line, = ax.plot(x, y, 's-', linewidth=2, markersize=8,
+                        label='Экспериментальные точки', color='red')
+
+        # Добавляем подписи к точкам (значения)
+        for i, (xi, yi) in enumerate(zip(x, y)):
+            ax.annotate(f'({xi:.3f}, {yi:.3f})',
+                        (xi, yi),
+                        textcoords="offset points",
+                        xytext=(0, 10),
+                        ha='center',
+                        fontsize=8,
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.7))
+
+        # Настройка осей
+        ax.set_xlabel("Δφ (разность фаз)", fontsize=12, fontweight='bold')
+        ax.set_ylabel("h", fontsize=12, fontweight='bold')
+
+        # Добавляем заголовок
+        ax.set_title('Зависимость h от разности фаз', fontsize=14, fontweight='bold')
+
+        # Добавляем легенду
+        ax.legend(loc='best', fontsize=10)
+
+        # Добавляем сетку
+        ax.grid(True, alpha=0.3)
+
+        # Добавляем подписи минимальных и максимальных значений
+        if len(x) > 0:
+            max_idx = np.argmax(y)
+            min_idx = np.argmin(y)
+
+            ax.annotate(f'Max: ({x[max_idx]:.3f}, {y[max_idx]:.3f})',
+                        (x[max_idx], y[max_idx]),
+                        textcoords="offset points",
+                        xytext=(0, -20),
+                        ha='center',
+                        fontsize=9,
+                        color='green',
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='lightgreen', alpha=0.7))
+
+            ax.annotate(f'Min: ({x[min_idx]:.3f}, {y[min_idx]:.3f})',
+                        (x[min_idx], y[min_idx]),
+                        textcoords="offset points",
+                        xytext=(0, 20),
+                        ha='center',
+                        fontsize=9,
+                        color='red',
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='lightcoral', alpha=0.7))
+
+        self.canvas2.draw()
+
+    def _plot_graph3(self):
+        if self.trade_data3 is None or len(self.trade_data3[0]) == 0:
+            QtWidgets.QMessageBox.warning(self, "Предупреждение",
+                                          "Нет данных для построения графика. Сначала задайте таблицу.")
+            return
+
+        x, y = self.trade_data3
+
+        ax = self.canvas3.ax
+        ax.clear()
+
+        # Строим график с лейблами
+        line, = ax.plot(x, y, '^-', linewidth=2, markersize=8,
+                        label='Экспериментальные точки', color='green')
+
+        # Добавляем подписи к точкам (значения)
+        for i, (xi, yi) in enumerate(zip(x, y)):
+            ax.annotate(f'({xi:.3f}, {yi:.3f})',
+                        (xi, yi),
+                        textcoords="offset points",
+                        xytext=(0, 10),
+                        ha='center',
+                        fontsize=8,
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.7))
+
+        # Настройка осей
+        ax.set_xlabel("Δφ (разность фаз)", fontsize=12, fontweight='bold')
+        ax.set_ylabel("СКО шума", fontsize=12, fontweight='bold')
+
+        # Добавляем заголовок
+        ax.set_title('Диаграмма обмена', fontsize=14, fontweight='bold')
+
+        # Добавляем легенду
+        ax.legend(loc='best', fontsize=10)
+
+        # Добавляем сетку
+        ax.grid(True, alpha=0.3)
+
+        # Добавляем подписи минимальных и максимальных значений
+        if len(x) > 0:
+            max_idx = np.argmax(y)
+            min_idx = np.argmin(y)
+
+            ax.annotate(f'Max: ({x[max_idx]:.3f}, {y[max_idx]:.3f})',
+                        (x[max_idx], y[max_idx]),
+                        textcoords="offset points",
+                        xytext=(0, -20),
+                        ha='center',
+                        fontsize=9,
+                        color='green',
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='lightgreen', alpha=0.7))
+
+            ax.annotate(f'Min: ({x[min_idx]:.3f}, {y[min_idx]:.3f})',
+                        (x[min_idx], y[min_idx]),
+                        textcoords="offset points",
+                        xytext=(0, 20),
+                        ha='center',
+                        fontsize=9,
+                        color='red',
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='lightcoral', alpha=0.7))
+
+        self.canvas3.draw()
 
 
 # ---------- Запуск приложения
